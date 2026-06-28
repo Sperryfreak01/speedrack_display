@@ -1,0 +1,11 @@
+# Credentials — never commit
+credentials.h
+
+# PlatformIO build artifacts
+.pio/
+
+# ESP-IDF build artifacts
+build/
+sdkconfig
+managed_components/
+dependencies.lock

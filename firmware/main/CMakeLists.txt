@@ -1,0 +1,21 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "wifi.c"
+        "mqtt.c"
+        "gpio_ctrl.c"
+    INCLUDE_DIRS
+        "."
+        "${CMAKE_SOURCE_DIR}"  # exposes lv_conf.h to LVGL
+    REQUIRES
+        ui
+        esp_wifi
+        esp_event
+        esp_netif
+        mqtt
+        driver
+        esp_lvgl_port
+        nvs_flash
+        esp_timer
+        log
+)

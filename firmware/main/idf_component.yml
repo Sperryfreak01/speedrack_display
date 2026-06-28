@@ -1,0 +1,24 @@
+## ESP-IDF Component Manager manifest for the main application component.
+##
+## BSP NOTE: The Waveshare ESP32-C6-Touch-LCD-1.47 BSP is not currently in the
+## ESP component registry. You have two options:
+##   A) Clone the Waveshare BSP into firmware/components/bsp/ (see README in
+##      that directory once Waveshare publishes one).
+##   B) Use the Waveshare factory example directly as the BSP source and copy
+##      the relevant headers/drivers into components/bsp/.
+##
+## Until the BSP is wired in, the build will fail with a missing "bsp/esp-bsp.h".
+## When resolved, uncomment and correct the dependency below.
+
+dependencies:
+  idf: ">=5.1"
+
+  lvgl/lvgl:
+    version: "^9.5.0"
+
+  espressif/esp_lvgl_port:
+    version: "*"
+
+  ## Uncomment when BSP component name is confirmed:
+  # waveshare/esp32_c6_touch_lcd_1_47:
+  #   version: "*"

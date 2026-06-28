@@ -1,0 +1,18 @@
+# ESP-IDF sdkconfig defaults for speedrack_display
+# These are applied on top of the ESP32-C6 defaults.
+
+# LVGL — point at our lv_conf.h via CMake LV_CONF_PATH (set in CMakeLists.txt)
+# No CONFIG_LV_* overrides needed here; lv_conf.h handles it.
+
+# MQTT client
+CONFIG_MQTT_TRANSPORT_WEBSOCKET=n
+CONFIG_MQTT_TRANSPORT_WEBSOCKET_SECURE=n
+
+# Wi-Fi
+CONFIG_ESP_WIFI_SOFTAP_SUPPORT=n
+
+# Increase main task stack for BSP init
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Logging
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
