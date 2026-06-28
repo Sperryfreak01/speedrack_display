@@ -26,8 +26,10 @@
  * placeholders. This is expected.
  */
 
+/* Real IBM Plex Mono Bold assets are now in ui/fonts/font_mono_*.c.
+ * Override to 1 at compile time to fall back to LVGL built-in Montserrat. */
 #ifndef USE_PLACEHOLDER_FONTS
-#define USE_PLACEHOLDER_FONTS 1
+#define USE_PLACEHOLDER_FONTS 0
 #endif
 
 #if USE_PLACEHOLDER_FONTS
