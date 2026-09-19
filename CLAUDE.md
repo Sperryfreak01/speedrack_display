@@ -68,10 +68,11 @@ sg dialout -c "pio run --target upload --upload-port /dev/ttyACM0"
 **USB hot-plug quirk observed 2026-09-19**: after a flash + hard reset,
 `/dev/ttyACM0` sometimes disappears from the bus entirely (not just the
 device, `lsusb` shows *no* non-hub devices at all) and doesn't come back on
-its own — needs a physical unplug/replug of the USB-C cable. Unclear yet if
-this is Asahi Linux's USB stack specifically or a general Linux CDC-ACM
-quirk with a device that resets itself repeatedly/quickly. Not a firmware
-bug (the board was confirmed running fine while the port was gone).
+its own — needs a physical unplug/replug of the USB-C cable. Root cause
+unclassified — could be Asahi Linux's USB stack, a general Linux CDC-ACM
+quirk with a device that resets itself repeatedly/quickly, or something
+else; the board itself was confirmed running fine while the port was gone,
+but that alone doesn't rule out a firmware-side trigger for the disconnect.
 
 ## Build system: use PlatformIO, but the project needs one tweak
 
@@ -211,7 +212,7 @@ reflashed** — see Open items):
    come back despite several unplug/replug cycles — possibly an Asahi Linux
    USB hot-plug quirk rather than a firmware issue (the board itself was
    confirmed running fine, screen lit, UI rendering, when last observed).
-   Get the port back, then:
+   Get the port back, then, from `firmware/`:
    `sg dialout -c "pio run --target upload --upload-port /dev/ttyACM0"`.
 2. **Visually confirm landscape orientation is fully correct** (not
    mirrored or upside-down) after reflashing. If wrong, try flipping

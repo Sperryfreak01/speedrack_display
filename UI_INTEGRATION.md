@@ -103,8 +103,8 @@ void app_main(void)
     lvgl_port_unlock();
 
     /* 4. Screen navigation: no touch hardware, so call ui_toggle_screen()
-     *    from a BOOT-button (GPIO9) GPIO handler instead — see
-     *    firmware/main/gpio_ctrl.c. */
+     *    from the debounced BOOT-button (GPIO9) GPIO polling task instead
+     *    — see gpio_poll_task() in firmware/main/gpio_ctrl.c. */
 }
 ```
 
@@ -167,9 +167,9 @@ boot state. Call exactly once after display + LVGL init.
 #### `void ui_toggle_screen(void)`
 Switch to the other screen (home ↔ diagnostics), with the same 200 ms
 FADE_IN animation used internally. This board has no touch hardware, so the
-firmware layer calls this from the BOOT-button GPIO handler (see
-`firmware/main/gpio_ctrl.c`) instead of relying on a tap gesture. Caller
-must hold the LVGL lock.
+firmware layer calls this from the debounced BOOT-button GPIO polling task
+(`gpio_poll_task()` in `firmware/main/gpio_ctrl.c`) instead of relying on a
+tap gesture. Caller must hold the LVGL lock.
 
 ---
 
@@ -370,7 +370,7 @@ These items are flagged in the spec as firmware responsibilities:
 
 - [ ] 3-position toggle debounce and GPIO read (two GPIOs for SPDT center-off)
 - [ ] Two relay GPIO outputs with interlock (power relay only when signal relay energized)
-- [ ] BOOT button (GPIO9) debounce and `ui_toggle_screen()` call — no touch hardware on this board
+- [x] BOOT button (GPIO9) debounce and `ui_toggle_screen()` call — no touch hardware on this board (implemented in `gpio_poll_task()`; physical-hardware verification still pending — see Open items in CLAUDE.md)
 - [ ] MQTT client connect / reconnect / LWT (`speedo-bench/state/online`)
 - [ ] Wi-Fi provisioning (hard-coded SSID/pass, or ESP-IDF Improv / BLE provisioning)
 - [ ] TF card — logging or leave unused

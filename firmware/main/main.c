@@ -158,9 +158,8 @@ static void lvgl_display_init(void)
             .swap_bytes = true,
         },
     };
-    if (lvgl_port_add_disp(&disp_cfg) == NULL) {
-        ESP_LOGE(TAG, "lvgl_port_add_disp failed");
-    }
+    lv_display_t *display = lvgl_port_add_disp(&disp_cfg);
+    ESP_ERROR_CHECK(display != NULL ? ESP_OK : ESP_FAIL);
 }
 
 void app_main(void)
