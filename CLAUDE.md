@@ -65,6 +65,14 @@ port access in the current session, e.g.:
 sg dialout -c "pio run --target upload --upload-port /dev/ttyACM0"
 ```
 
+**USB hot-plug quirk observed 2026-09-19**: after a flash + hard reset,
+`/dev/ttyACM0` sometimes disappears from the bus entirely (not just the
+device, `lsusb` shows *no* non-hub devices at all) and doesn't come back on
+its own — needs a physical unplug/replug of the USB-C cable. Unclear yet if
+this is Asahi Linux's USB stack specifically or a general Linux CDC-ACM
+quirk with a device that resets itself repeatedly/quickly. Not a firmware
+bug (the board was confirmed running fine while the port was gone).
+
 ## Build system: use PlatformIO, but the project needs one tweak
 
 `firmware/` is a native ESP-IDF project (root `CMakeLists.txt` calls
