@@ -298,6 +298,26 @@ broker `mqtt://192.168.2.9:1883`, client id `speedo-bench`, LWT
 `homeassistant/.../config` discovery topics. Subscribes: `speedo/speed`,
 `speedo-bench/cfg/units`.
 
+## Displayed speed temporarily sourced from speedo/target, not speedo/speed (2026-09-19)
+
+Verified the display pipeline is correct by subscribing to the broker
+directly with the same credentials the firmware uses (`python3` +
+`paho-mqtt`, see `/tmp/mqtt_watch.py`, not checked into this repo) and
+comparing live traffic against the on-device numeral — they matched
+exactly. The user expected ~20 but both the wire and the display showed
+26–30, meaning **the upstream controller firmware that publishes
+`speedo/speed` is producing incorrect values** — this is a bug outside this
+repo, not in the ESP32 display firmware.
+
+**Stopgap** (`firmware/main/mqtt.c`): added `TOPIC_SPEED_DISPLAY`, currently
+aliased to `TOPIC_SPEED_ZERO` (`speedo/target`, the commanded value) instead
+of `TOPIC_STATE_SPEED` (`speedo/speed`, the buggy actual-value feed). The
+Home Assistant "Speed" sensor discovery config is untouched and still
+tracks `speedo/speed`. **TODO: revert `TOPIC_SPEED_DISPLAY` back to
+`TOPIC_STATE_SPEED`** once the upstream controller's speed calculation bug
+is fixed — there's a comment marking this at the `#define` site in
+`mqtt.c`.
+
 ## Open items (as of 2026-09-19, next session pick up here)
 
 1. **Screen-toggle visual tearing.** BOOT button no longer crashes (see
