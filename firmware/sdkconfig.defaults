@@ -1,6 +1,13 @@
 # ESP-IDF sdkconfig defaults for speedrack_display
 # These are applied on top of the ESP32-C6 defaults.
 
+# Flash: this board's chip identifies as ESP32-C6FH8 (8MB), not the 4MB
+# ESP32-C6FH4 the board_build default assumes (see CLAUDE.md "Unresolved
+# discrepancy"). Without this, the app partition defaults to a ~1MB size
+# too small for the LVGL UI + Wi-Fi + MQTT image (~1.4MB).
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+
 # LVGL — point at our lv_conf.h via CMake LV_CONF_PATH (set in CMakeLists.txt)
 # No CONFIG_LV_* overrides needed here; lv_conf.h handles it.
 

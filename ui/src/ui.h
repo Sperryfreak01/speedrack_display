@@ -13,6 +13,14 @@ typedef enum { UNITS_MPH, UNITS_KPH }                units_t;
  */
 void ui_init(void);
 
+/*
+ * Switch to the other screen (home <-> diagnostics). Safe to call from
+ * any task, but the caller must hold the LVGL lock (lvgl_port_lock()/
+ * lvgl_port_unlock()) — this board has no touch hardware, so screen
+ * switching is driven externally (BOOT button), not by LVGL click events.
+ */
+void ui_toggle_screen(void);
+
 /* §7 — State update functions called by the application layer */
 void ui_set_speed(int speed);
 void ui_set_units(units_t u);

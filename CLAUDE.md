@@ -3,8 +3,8 @@
 Speedometer test fixture: ESP32-C6 display device (Waveshare
 ESP32-C6-LCD-1.47, **non-touch**) showing live speed + diagnostics, driven by
 GPIO toggles/relays and MQTT. See [UI_INTEGRATION.md](UI_INTEGRATION.md) for
-the UI/firmware contract (screen API, MQTT topics, GPIO truth table) — note
-that doc still assumes touch navigation and needs updating (see below).
+the UI/firmware contract (screen API, MQTT topics, GPIO truth table) — updated
+for BOOT-button navigation (see "Full port plan" below).
 
 ## Hardware on hand
 
@@ -20,8 +20,9 @@ of the original blank-screen/touch-error smoke test).
   driver bug, they were reads against a chip that doesn't exist on this board.
 - Confirmed pin table (docs.waveshare.com/ESP32-C6-LCD-1.47):
   - `MOSI` = GPIO6, `SCLK` = GPIO7, `LCD_CS` = GPIO14, `LCD_DC` = GPIO15,
-    `LCD_RST` = GPIO21, `LCD_BL` = GPIO22 (backlight control method — PWM vs.
-    plain GPIO — not stated on the page, worth checking empirically).
+    `LCD_RST` = GPIO21, `LCD_BL` = GPIO22. Backlight is PWM-capable — driven
+    via LEDC in `firmware/main/main.c`, hard-capped at 50% duty (see "Port
+    status" below).
   - Also on board: RGB LED on GPIO8, BOOT button on GPIO9, RESET button, TF
     card slot (SPI), USB-C. No IMU, no battery monitor (contrast with what the
     Touch variant's demo package assumed).
@@ -39,12 +40,11 @@ of the original blank-screen/touch-error smoke test).
   a sanity check later if flash partitioning ever gets tight.
 - Shows up at `/dev/ttyACM0` (USB-JTAG/serial, `lsusb`: "Espressif USB JTAG/serial
   debug unit", VID:PID `303a:1001`).
-- **UI contract conflict**: [UI_INTEGRATION.md](UI_INTEGRATION.md) assumes
-  touch navigation ("tap anywhere to switch screens", `bsp_touch_init(NULL)`,
-  AXS15206). That can't work on this hardware. Decided direction (not yet
-  implemented): use the onboard **BOOT button (GPIO9)** to cycle between
-  home/diagnostics screens instead of touch. `UI_INTEGRATION.md` and `ui/`
-  still need updating to reflect this — not done yet.
+- **UI contract conflict — resolved**: [UI_INTEGRATION.md](UI_INTEGRATION.md)
+  previously assumed touch navigation; that can't work on this hardware. Now
+  uses the onboard **BOOT button (GPIO9)** to cycle between home/diagnostics
+  screens instead, via the new `ui_toggle_screen()` (see "Full port plan"
+  below for implementation details).
 
 ## Toolchain setup (this machine, Fedora/Asahi aarch64)
 
@@ -86,20 +86,18 @@ pio run                                                  # build
 sg dialout -c "pio run --target upload --upload-port /dev/ttyACM0"  # flash
 ```
 
-## firmware/ is currently a non-buildable scaffold (historical wrong-board plan superseded)
+## firmware/ non-buildable-scaffold blocker — resolved
 
-`firmware/main/main.c` still assumes a generic BSP abstraction (`bsp/esp-bsp.h`
-with `bsp_display_start()`, `bsp_touch_init(NULL)`, etc.) that doesn't exist —
-leftover from the original wrong-board assumption (Touch-LCD-1.47 vs. the
-actual non-touch LCD-1.47 on hand, see "Hardware on hand" above). The
-previous plan here — vendor Waveshare's `esp_bsp` / `esp_lcd_jd9853` /
-`esp_lcd_touch_axs5106` components from their Touch-LCD demo package and patch
-them for IDF 6.1.0 — targeted that wrong board and is now obsolete. ST7789 is
-a built-in ESP-IDF panel type and this board has no touch controller, so
-**no BSP vendoring is needed at all**.
-
-See "Full port plan (next session: do this)" below for the current,
-confirmed-correct plan, based on the working ST7789 smoke test.
+`firmware/main/main.c` used to assume a generic BSP abstraction
+(`bsp/esp-bsp.h` with `bsp_display_start()`, `bsp_touch_init(NULL)`, etc.)
+that doesn't exist — leftover from the original wrong-board assumption
+(Touch-LCD-1.47 vs. the actual non-touch LCD-1.47 on hand, see "Hardware on
+hand" above). The previous plan here — vendor Waveshare's `esp_bsp` /
+`esp_lcd_jd9853` / `esp_lcd_touch_axs5106` components from their Touch-LCD
+demo package and patch them for IDF 6.1.0 — targeted that wrong board and was
+scrapped. ST7789 is a built-in ESP-IDF panel type and this board has no touch
+controller, so **no BSP vendoring was needed at all**. See "Port status"
+below for the completed port.
 
 ## Smoke-test #1 results (stock Waveshare Touch-LCD demo — wrong board, historical)
 
@@ -127,89 +125,97 @@ fill of solid red — **bypassing LVGL entirely** to isolate the panel bring-up
 from the UI layer. Flashed and visually confirmed: **solid red screen,
 display confirmed working.** Boot log had zero errors at every init step.
 
-## Next steps (not yet done)
+## Port status (2026-09-19): code complete, build succeeds, one flash pending re-verification
 
-1. ~~Root-cause the blank-screen issue~~ — done, see above.
-2. ~~Fix or work around the touch I2C error loop~~ — done: there's no touch
-   hardware, so the fix is to not initialize a touch driver at all.
-3. Full firmware port — see detailed plan below. Not started yet.
+The full LVGL+GPIO+Wi-Fi+MQTT port described in the old "Full port plan" is
+**done**. All 7 of its steps landed: `firmware/main/main.c` now does the raw
+ST7789 bring-up (from
+[firmware/reference/st7789_confirmed_init.c](firmware/reference/st7789_confirmed_init.c))
+wired into `lvgl_port_init()`/`lvgl_port_add_disp()`, no BSP/touch calls
+anywhere; `firmware/main/CMakeLists.txt` and `idf_component.yml` no longer
+reference a BSP; `ui_toggle_screen()` exists in `ui/src/ui.h`/`ui.c` and is
+called from a BOOT-button (GPIO9) debounce in `firmware/main/gpio_ctrl.c`'s
+existing poll task; `UI_INTEGRATION.md` is updated throughout for BOOT-button
+nav. A static three-dimension review pass (API-vs-real-headers, pin
+conflicts, cross-file contracts) came back with zero findings before the
+first build attempt.
 
-## Full port plan (next session: do this)
+**Backlight** ended up PWM, not plain-GPIO: `main.c` drives GPIO22 via LEDC
+(`LEDC_TIMER_10_BIT`, 5kHz) and is **hard-capped at 50% duty**
+(`BACKLIGHT_MAX_PERCENT`) — full brightness is not to be used on this
+display, so there's deliberately no code path that can exceed the cap.
 
-The confirmed-working ST7789 init sequence is saved in this repo at
-[firmware/reference/st7789_confirmed_init.c](firmware/reference/st7789_confirmed_init.c)
-(copied verbatim from the working `/tmp/st7789_smoketest` — that `/tmp` copy
-may not survive a reboot, this in-repo copy is the durable source of truth).
-It's a standalone raw `esp_lcd` program, not yet wired to LVGL — that wiring
-is most of what's left. Concrete steps, file by file:
+### Build blockers found beyond the original plan (all fixed)
 
-**1. `firmware/main/main.c`** — currently calls `bsp_display_start()`,
-`bsp_display_set_brightness()`, `bsp_touch_init(NULL)` from a nonexistent
-`bsp/esp-bsp.h` (leftover from the wrong-board assumption). Replace with:
-   - The SPI bus init + panel IO + `esp_lcd_new_panel_st7789()` + reset/init/
-     invert/gap/mirror/disp_on sequence from the reference file (pins:
-     MOSI=6, SCLK=7, CS=14, DC=15, RST=21, BL=22 as plain GPIO output high;
-     20MHz SPI clock was used for the safe first test — can likely go higher,
-     untested how high).
-   - Then, instead of the reference file's raw `draw_bitmap` test loop, call
-     `lvgl_port_init()` + `lvgl_port_add_disp()` (pattern already visible in
-     `/tmp/ws_smoketest/main/main.c`'s `app_lvgl_init()`, if that still
-     exists — it also survived only in `/tmp`) passing the `io_handle` /
-     `panel_handle` from the ST7789 init. hres=172, vres=320, no
-     swap_xy/mirror (rotation 0), gap already applied via
-     `esp_lcd_panel_set_gap(panel_handle, 34, 0)` before adding the display.
-   - **Do not call `lvgl_port_add_touch()`** — no touch hardware exists.
-   - No `bsp_touch_init` call at all.
-   - Then `ui_init()` under `lvgl_port_lock()/unlock()` as it already does.
+None of these were anticipated in the original port plan — they only showed
+up once a real `pio run` was attempted for the first time (previous
+smoke tests were minimal raw-`esp_lcd` programs, not the full app):
 
-**2. `firmware/main/CMakeLists.txt`** — `REQUIRES` currently has `ui`,
-`esp_wifi`, `esp_event`, `esp_netif`, `mqtt`, `driver`, `esp_lvgl_port`,
-`nvs_flash`, `esp_timer`, `log`. Add: `esp_lcd`, `esp_driver_gpio`,
-`esp_driver_spi` (needed for the panel/SPI bus calls now living directly in
-`main.c` instead of a vendored BSP component).
+1. **`mqtt` isn't a bundled ESP-IDF component in IDF 6.1.0** — it's a managed
+   component now. Fix: added `espressif/mqtt: "^1.0.0"` to
+   `firmware/main/idf_component.yml`.
+2. **`ui/fonts/*.c` (lv_font_conv output) fail to compile**: they guard their
+   LVGL include with `#ifdef LV_LVGL_H_INCLUDE_SIMPLE` / else
+   `#include "lvgl/lvgl.h"`, but that flag was never defined, and the `lvgl/`
+   subpath doesn't resolve against this component-manager LVGL package
+   layout (root dir is `lvgl__lvgl/`, not `lvgl/`). Fix: added
+   `target_compile_definitions(${COMPONENT_LIB} PUBLIC LV_LVGL_H_INCLUDE_SIMPLE)`
+   to `firmware/components/ui/CMakeLists.txt`.
+3. **Firmware image (~1.42MB) overflows the default 1MB app partition.**
+   PlatformIO picks the partition CSV via its own `board_build.partitions`
+   key — it does **not** respect the ESP-IDF `PARTITION_TABLE_*` Kconfig
+   choice in `sdkconfig.defaults` even though both were set. Fix: set
+   `board_build.partitions = partitions_singleapp_large.csv` in
+   `firmware/platformio.ini` (1500K app partition) *and*
+   `CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y` /
+   `CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y` in `sdkconfig.defaults`,
+   matching the confirmed 8MB chip (see "Unresolved discrepancy" above).
+4. **`firmware/credentials.h` (gitignored, Wi-Fi SSID/password) didn't
+   exist** — only the `.template` did. Now created locally with real
+   credentials; nothing to do here in future sessions unless the file is
+   lost (it's gitignored, so it won't survive a fresh clone).
 
-**3. `firmware/main/idf_component.yml`** — delete the whole "BSP NOTE" comment
-block; it's now false. No BSP dependency is needed at all — ST7789 is a
-built-in ESP-IDF panel type. Keep the `lvgl/lvgl` and `espressif/esp_lvgl_port`
-deps as-is.
+### First flash (confirmed): boots clean, UI renders, wrong orientation
 
-**4. Backlight**: reference file drives GPIO22 as plain digital output HIGH.
-Waveshare's docs don't say if it's PWM-capable; plain digital worked for the
-smoke test. If dimming is wanted later, try LEDC PWM on GPIO22 (pattern in
-old `/tmp/ws_smoketest/components/esp_bsp/bsp_display.c`'s
-`bsp_display_brightness_init()`, also only in `/tmp` — not required for a
-working display, just for brightness control).
+First full flash came up clean — no crash loop, Wi-Fi/MQTT/GPIO/UI all
+initialize. Visually confirmed on hardware: **the UI renders, but rotated —
+the landscape-designed screens were being drawn into the panel's native
+portrait framebuffer** (panel is physically 172 wide × 320 tall; the UI
+layout in `ui/src/scr_home.c`/`scr_diag.c` assumes 320×172 landscape).
 
-**5. `ui/src/ui.c` + `ui/src/ui.h`** — screen switching is currently *only*
-reachable via LVGL click events on the screen objects themselves
-(`on_home_click`/`on_diag_click`, both `static`, wired to `LV_EVENT_CLICKED`
-in `ui_init()` at [ui/src/ui.c:13-23](ui/src/ui.c:13-23)). There is **no
-public function to switch screens externally** — this must be added. Add
-something like `void ui_toggle_screen(void)` to `ui.h`, implemented in `ui.c`
-by extracting the shared logic from `on_home_click`/`on_diag_click` (need to
-track which screen is currently active, e.g. a static `bool on_diag` flag, or
-check `lv_screen_active()` against `scr_home`/`scr_diag`) so it can be called
-from a GPIO handler, not just an LVGL click event.
+Fix applied in `firmware/main/main.c` (built successfully, **not yet
+reflashed** — see Open items):
+- `LCD_H_RES`/`LCD_V_RES` swapped to 320/172 (these now describe the
+  LVGL-logical/landscape resolution, not the physical panel).
+- `lvgl_port_display_cfg_t.rotation.swap_xy = true`.
+- `esp_lcd_panel_set_gap()` gap moved from `(34, 0)` to `(0, 34)` — the
+  34px silicon offset is a fixed property of the panel's physical short
+  axis; with `swap_xy` on, that axis is addressed via RASET (y) instead of
+  CASET (x), confirmed by reading `esp_lcd_panel_st7789.c`'s
+  `draw_bitmap`/gap-application code directly.
+- `mirror_x`/`mirror_y` left `false`/`false` — **unconfirmed**, may need
+  flipping once the rotation itself is verified (see Open items).
 
-**6. BOOT button wiring** — GPIO9, active-low (internal pull-up, pressed =
-LOW), standard ESP32 BOOT button behavior. `firmware/main/gpio_ctrl.c`
-already has an established 10ms-poll/50ms-debounce pattern for the existing
-toggle switches (see `gpio_ctrl.h`'s doc comment) — extend that same task (or
-add a parallel one) to poll GPIO9, debounce, and call `ui_toggle_screen()`
-(guarded by `lvgl_port_lock()/unlock()`) on a falling-edge press.
+## Open items (as of 2026-09-19, next session pick up here)
 
-**7. `UI_INTEGRATION.md`** needs updating in several places once the above is
-done:
-   - Quick orientation table: `Touch | AXS15206 capacitive, via BSP` → replace
-     with something like `Nav | BOOT button (GPIO9), no touch hardware`.
-   - The `Initialization sequence` code sample: remove `bsp_touch_init(NULL)`.
-   - The `Touch navigation` section: rewrite for BOOT-button nav, document
-     `ui_toggle_screen()` as the new public function once added.
-   - `App-layer punch list`: add "BOOT button debounce + screen-toggle call"
-     alongside the existing toggle-switch debounce item.
-
-**8. Build/flash/verify**: same commands as always
-(`pio run`, `sg dialout -c "pio run --target upload --upload-port /dev/ttyACM0"`).
-Confirm visually that `ui_init()`'s home screen renders correctly (not just a
-solid color like the diagnostic test), and that pressing BOOT switches to the
-diagnostics screen and back.
+1. **Reflash the rotation fix.** Build succeeded but the board's USB serial
+   (`/dev/ttyACM0`) dropped off the bus after the first flash and hadn't
+   come back despite several unplug/replug cycles — possibly an Asahi Linux
+   USB hot-plug quirk rather than a firmware issue (the board itself was
+   confirmed running fine, screen lit, UI rendering, when last observed).
+   Get the port back, then:
+   `sg dialout -c "pio run --target upload --upload-port /dev/ttyACM0"`.
+2. **Visually confirm landscape orientation is fully correct** (not
+   mirrored or upside-down) after reflashing. If wrong, try flipping
+   `mirror_x`/`mirror_y` in `firmware/main/main.c`'s `lvgl_display_init()` —
+   each is a one-line change + reflash (~10s cycle).
+3. **Confirm BOOT button (GPIO9) actually toggles home/diagnostics screens**
+   on physical hardware — implemented and statically reviewed, not yet
+   pressed for real.
+4. **Confirm the 3-position toggle switch + relay interlock** behave
+   correctly on real GPIO12/13/16/17 wiring (existing code, unmodified by
+   this port, but never exercised on this specific board before).
+5. **Confirm Wi-Fi actually associates and MQTT actually connects** to
+   `192.168.2.9:1883` (hard-coded broker address in `firmware/main/mqtt.c`) —
+   credentials are in place but end-to-end connectivity hasn't been observed
+   in a boot log yet.

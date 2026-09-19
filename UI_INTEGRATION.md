@@ -1,8 +1,8 @@
 # UI Integration Reference — Speedometer Test Fixture
 
 This document covers everything the firmware layer needs to know to drive the LVGL display
-UI defined in `ui/`. The UI handles presentation and touch only — GPIO, relay control,
-MQTT client, and Wi-Fi provisioning are application-layer responsibilities.
+UI defined in `ui/`. The UI handles presentation only (no touch hardware on this board) —
+GPIO, relay control, MQTT client, and Wi-Fi provisioning are application-layer responsibilities.
 
 ---
 
@@ -10,9 +10,9 @@ MQTT client, and Wi-Fi provisioning are application-layer responsibilities.
 
 | Item | Value |
 |---|---|
-| Hardware | Waveshare ESP32-C6-Touch-LCD-1.47 |
-| Display | 320 × 172 px landscape, JD9853, RGB565 |
-| Touch | AXS15206 capacitive, via BSP |
+| Hardware | Waveshare ESP32-C6-LCD-1.47 (non-touch) |
+| Display | 172 × 320 px, ST7789, RGB565 |
+| Nav | BOOT button (GPIO9), no touch hardware on this board |
 | LVGL version | 9.5 |
 | Public header | `ui/src/ui.h` |
 | Entry point | `ui_init()` |
@@ -78,27 +78,33 @@ so built-in color choices can't override the explicit per-widget styles.
 
 ## Initialization sequence
 
-Call `ui_init()` **after** the BSP and LVGL are fully initialized:
+Call `ui_init()` **after** the ST7789 panel and LVGL are fully initialized:
 
 ```c
-#include "bsp/esp-bsp.h"   // Waveshare BSP
+#include "esp_lcd_panel_ops.h"
+#include "esp_lvgl_port.h"
 #include "ui.h"
 
 void app_main(void)
 {
-    /* 1. BSP: bring up display + touch */
-    bsp_display_start();
-    bsp_display_set_brightness(100);   // §1: backlight at 100%
-    bsp_touch_init(NULL);
+    /* 1. Display: bring up the ST7789 panel directly via the built-in
+     *    ESP-IDF esp_lcd component (see firmware/main/main.c for the full
+     *    SPI bus / panel IO / panel init sequence). No touch init — this
+     *    board has no touch controller. */
+    display_init();       // esp_lcd_new_panel_st7789() + reset/init/gap/etc.
 
-    /* 2. LVGL: the BSP's display driver and indev are now registered.
-     *    If using lv_port_esp32 or esp_lvgl_port, call their init here. */
+    /* 2. LVGL: wire the panel into esp_lvgl_port */
+    lvgl_port_init(&lvgl_cfg);
+    lvgl_port_add_disp(&disp_cfg);
 
-    /* 3. UI: build both screens, wire touch events, apply boot state */
+    /* 3. UI: build both screens, wire fallback click events, apply boot state */
+    lvgl_port_lock(0);
     ui_init();
+    lvgl_port_unlock();
 
-    /* 4. Start LVGL task (if not started by the port already) */
-    // lv_task_handler() must be called periodically from a dedicated task
+    /* 4. Screen navigation: no touch hardware, so call ui_toggle_screen()
+     *    from a BOOT-button (GPIO9) GPIO handler instead — see
+     *    firmware/main/gpio_ctrl.c. */
 }
 ```
 
@@ -153,8 +159,17 @@ typedef enum { UNITS_MPH, UNITS_KPH }                units_t;
 ### Functions
 
 #### `void ui_init(void)`
-Build both screens, register touch handlers, load home screen, apply boot state.
-Call exactly once after BSP + LVGL init.
+Build both screens, register fallback click handlers, load home screen, apply
+boot state. Call exactly once after display + LVGL init.
+
+---
+
+#### `void ui_toggle_screen(void)`
+Switch to the other screen (home ↔ diagnostics), with the same 200 ms
+FADE_IN animation used internally. This board has no touch hardware, so the
+firmware layer calls this from the BOOT-button GPIO handler (see
+`firmware/main/gpio_ctrl.c`) instead of relying on a tap gesture. Caller
+must hold the LVGL lock.
 
 ---
 
@@ -306,11 +321,16 @@ energized. Enforce this in the GPIO write logic, not in the UI.
 
 ---
 
-## Touch navigation
+## Screen navigation
 
-Tap anywhere on either screen to switch screens. No swipe, no long-press.
-200 ms FADE_IN transition. This is fully handled inside `ui_init()` — the firmware
-layer does not need to wire any touch callbacks.
+This board (Waveshare ESP32-C6-LCD-1.47) has **no touch controller**. Screen
+switching is driven by the firmware layer calling `ui_toggle_screen()` from
+the onboard BOOT button (GPIO9), debounced in `firmware/main/gpio_ctrl.c`'s
+existing poll task. Same 200 ms FADE_IN transition either direction.
+
+`ui_init()` still wires `LV_EVENT_CLICKED` on both screens to
+`ui_toggle_screen()` internally, in case touch is ever added later — but
+with no touch indev registered, those handlers never fire on this hardware.
 
 ---
 
@@ -350,10 +370,11 @@ These items are flagged in the spec as firmware responsibilities:
 
 - [ ] 3-position toggle debounce and GPIO read (two GPIOs for SPDT center-off)
 - [ ] Two relay GPIO outputs with interlock (power relay only when signal relay energized)
+- [ ] BOOT button (GPIO9) debounce and `ui_toggle_screen()` call — no touch hardware on this board
 - [ ] MQTT client connect / reconnect / LWT (`speedo-bench/state/online`)
 - [ ] Wi-Fi provisioning (hard-coded SSID/pass, or ESP-IDF Improv / BLE provisioning)
 - [ ] TF card — logging or leave unused
-- [ ] QMI8658 IMU — leave uninitialized (unused for this fixture)
+- [ ] No IMU or battery monitor on this board (unlike the Touch-LCD variant) — nothing to initialize
 
 ---
 
