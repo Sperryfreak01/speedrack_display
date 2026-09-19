@@ -17,10 +17,12 @@ static const char *TAG = "gpio_ctrl";
  *
  * Confirmed against docs.waveshare.com/ESP32-C6-LCD-1.47 (non-touch board):
  * display SPI uses GPIO6/7/14/15/21/22, RGB LED is GPIO8, BOOT button is
- * GPIO9. Pins chosen here (12, 13, 16, 17) don't overlap any of those.
+ * GPIO9. GPIO12/13 are this chip's native USB Serial/JTAG D-/D+ pins (used
+ * by the console/flash link) — do NOT use them for anything else. GPIO18/19
+ * are safe general-purpose pins on the SiP-flash variant of this chip.
  * ───────────────────────────────────────────────────────────────────────── */
-#define PIN_TOGGLE_A    GPIO_NUM_12   /* High when toggle UP   (SIG GEN) */
-#define PIN_TOGGLE_B    GPIO_NUM_13   /* High when toggle DOWN (MOTOR)   */
+#define PIN_TOGGLE_A    GPIO_NUM_18   /* High when toggle UP   (SIG GEN) */
+#define PIN_TOGGLE_B    GPIO_NUM_19   /* High when toggle DOWN (MOTOR)   */
 #define PIN_RELAY_SIG   GPIO_NUM_16   /* High = signal gen selected; NC = motor sensor */
 #define PIN_RELAY_PWR   GPIO_NUM_17   /* High = DUT powered (only when SIG relay HIGH) */
 #define PIN_BOOT_BTN    GPIO_NUM_9    /* Onboard BOOT button, active-low, internal pull-up */
@@ -185,7 +187,10 @@ void gpio_ctrl_init(void)
     };
     ESP_ERROR_CHECK(gpio_config(&boot_cfg));
 
-    xTaskCreate(gpio_poll_task, "gpio_poll", 3072, NULL, 5, NULL);
+    /* 3072 wasn't enough: ui_toggle_screen() -> lv_screen_load_anim()'s call
+     * depth overflowed it (confirmed via Guru Meditation stack protection
+     * fault on physical hardware, task name corrupted in the panic dump). */
+    xTaskCreate(gpio_poll_task, "gpio_poll", 6144, NULL, 5, NULL);
     ESP_LOGI(TAG, "GPIO control started (toggle A=GPIO%d B=GPIO%d, "
                   "relay_sig=GPIO%d relay_pwr=GPIO%d, boot_btn=GPIO%d)",
              PIN_TOGGLE_A, PIN_TOGGLE_B, PIN_RELAY_SIG, PIN_RELAY_PWR, PIN_BOOT_BTN);

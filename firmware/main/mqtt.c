@@ -1,5 +1,6 @@
 #include "mqtt.h"
 #include "ui.h"
+#include "credentials.h"
 
 #include "mqtt_client.h"
 #include "esp_log.h"
@@ -195,8 +196,10 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base,
 void mqtt_start(void)
 {
     esp_mqtt_client_config_t cfg = {
-        .broker.address.uri    = MQTT_BROKER_URI,
-        .credentials.client_id = MQTT_CLIENT_ID,
+        .broker.address.uri                  = MQTT_BROKER_URI,
+        .credentials.client_id               = MQTT_CLIENT_ID,
+        .credentials.username                = MQTT_USERNAME,
+        .credentials.authentication.password = MQTT_PASSWORD,
         .session.last_will = {
             .topic   = TOPIC_ONLINE,
             .msg     = "offline",

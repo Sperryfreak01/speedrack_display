@@ -192,8 +192,7 @@ the landscape-designed screens were being drawn into the panel's native
 portrait framebuffer** (panel is physically 172 wide × 320 tall; the UI
 layout in `ui/src/scr_home.c`/`scr_diag.c` assumes 320×172 landscape).
 
-Fix applied in `firmware/main/main.c` (built successfully, **not yet
-reflashed** — see Open items):
+Fix applied in `firmware/main/main.c`:
 - `LCD_H_RES`/`LCD_V_RES` swapped to 320/172 (these now describe the
   LVGL-logical/landscape resolution, not the physical panel).
 - `lvgl_port_display_cfg_t.rotation.swap_xy = true`.
@@ -202,29 +201,114 @@ reflashed** — see Open items):
   axis; with `swap_xy` on, that axis is addressed via RASET (y) instead of
   CASET (x), confirmed by reading `esp_lcd_panel_st7789.c`'s
   `draw_bitmap`/gap-application code directly.
-- `mirror_x`/`mirror_y` left `false`/`false` — **unconfirmed**, may need
-  flipping once the rotation itself is verified (see Open items).
+
+## Root cause found (2026-09-19): the "USB hot-plug quirk" was a GPIO pin conflict, not a Linux/Asahi issue
+
+The recurring `/dev/ttyACM0` dropout blamed earlier on "Asahi Linux's USB
+stack" had a real, confirmed cause: **`gpio_ctrl.c`'s 3-position toggle
+switch inputs were assigned to GPIO12/GPIO13**, which are this chip's
+**native USB Serial/JTAG D-/D+ pins** (confirmed against Espressif's
+ESP32-C6 datasheet — enabled by default, 40 mA drive strength, distinct from
+the other pins already checked against docs.waveshare.com). `gpio_ctrl_init()`
+reconfigured them as plain digital inputs with pull-down on every boot,
+which fights the USB PHY signaling on those same physical pads — this is
+almost certainly why the serial link kept vanishing after every reset,
+independent of anything Linux-side.
+
+**Fix**: toggle switch inputs moved to **GPIO18/GPIO19** in
+`firmware/main/gpio_ctrl.c` (confirmed safe: not strapping pins, not used by
+this board's display/LED/TF-card/USB, and not part of the "GPIO10/11 don't
+exist on SiP-flash variants" caveat for this chip). Caught before the
+toggle switch was physically wired into the fixture, so no rework needed.
+
+**Confirmed fixed**: after this change, a plain RST button press left
+`/dev/ttyACM0` enumerated and stable — previously *every* RST press (and
+most flashes) dropped the port entirely. `lsusb` before the fix: port gone,
+no non-hub devices at all. After: `Bus 001 Device XXX: ID 303a:1001
+Espressif USB JTAG/serial debug unit` stays present and stable across
+resets.
+
+**Toolchain note**: getting `/dev/ttyACM0` to reappear once it *has*
+dropped still requires **holding BOOT+RST, plugging in (or reconnecting) the
+USB-C cable, then releasing RST first and BOOT after** — a plain
+unplug/replug is not reliable on this machine. Also: opening the port with
+`pyserial` and explicitly setting `.rts`/`.dtr` (even to `False`) reliably
+resets the chip into ROM download mode (`waiting for download`) — this is
+the native USB-Serial-JTAG's built-in auto-reset-to-bootloader watching for
+control-line transitions, same trick `esptool` uses, and it fires for *any*
+client that touches those lines, not just esptool. Plain `cat
+/dev/ttyACM0` (no control-line manipulation) does **not** trigger it and is
+the safe way to capture a live boot/console log.
+
+## Root cause found (2026-09-19): mirrored display was a transpose, not a rotation
+
+`swap_xy = true` alone (MADCTL `MV` bit) is a diagonal transpose/reflection,
+not a 90° rotation — confirmed by reading `panel_st7789_mirror()` /
+`panel_st7789_swap_xy()` in `esp_lcd_panel_st7789.c` (`MX`=mirror_x,
+`MY`=mirror_y, `MV`=swap_xy, matching standard ST7789 MADCTL semantics). A
+transpose alone produces exactly the "correct up/down, but mirrored
+left-right like viewing from the back" symptom seen on hardware. **Fix**:
+added `mirror_x = true` in `firmware/main/main.c`'s `lvgl_display_init()`
+(now `swap_xy=true, mirror_x=true, mirror_y=false`) — confirmed correct on
+hardware, landscape and right-side-up with no mirroring.
+
+## Root cause found (2026-09-19): BOOT button crashed the firmware on every press
+
+Confirmed via a captured boot/panic log (see toolchain note above for how):
+pressing BOOT correctly logged `BOOT button pressed, screen toggled`, then
+immediately hit a **Guru Meditation "Stack protection fault"** and rebooted
+— the `gpio_poll` FreeRTOS task's stack (3072 B) wasn't enough headroom for
+`ui_toggle_screen()`'s call into `lv_screen_load_anim()` on top of the
+poll loop's own frame. The panic dump's task name field was itself
+corrupted (printed as garbage bytes), a classic stack-overflow signature.
+This is *why* the BOOT button looked like it did "nothing" on a single
+press (crash+reboot happens fast enough to be easy to miss) and why a fast
+double-press produced a visible white flash + Wi-Fi reconnect (that was the
+reboot, not a hardware BOOT/RST coupling quirk as first suspected).
+
+**Fix**: bumped the task's stack from 3072 to 6144 bytes in
+`firmware/main/gpio_ctrl.c`'s `xTaskCreate()` call. Confirmed via serial log
+that the crash/panic no longer occurs — the toggle now completes without a
+reboot (USB device stayed enumerated across repeated presses, whereas every
+prior crash caused a fresh `lsusb` re-enumeration).
+
+## Root cause found (2026-09-19): MQTT connection was rejected, not misconfigured
+
+Boot log showed `mqtt_client: Connection refused, not authorized` — a
+distinct CONNACK code (`MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED`, 0x5) from
+"bad username or password" (0x4). The firmware never sent *any*
+username/password at all (`esp_mqtt_client_config_t` only set
+`broker.address.uri` and `credentials.client_id`), so the broker was
+rejecting the anonymous/unauthenticated connection outright.
+
+**Fix**: added `MQTT_USERNAME`/`MQTT_PASSWORD` to `firmware/credentials.h`
+(gitignored, alongside `WIFI_SSID`/`WIFI_PASSWORD`) and
+`firmware/credentials.h.template`, wired into `firmware/main/mqtt.c`'s
+`esp_mqtt_client_config_t` via `.credentials.username` and
+`.credentials.authentication.password`. Broker-side ACL/user was set up to
+match by the user. **Confirmed connected**: boot log now shows `mqtt:
+Connected to broker` and `mqtt: HA discovery published`; Wi-Fi and MQTT
+status icons on the home screen show green on hardware.
+
+Full topic/credential surface for reference (see `firmware/main/mqtt.c`):
+broker `mqtt://192.168.2.9:1883`, client id `speedo-bench`, LWT
+`speedo-bench/state/online` = `offline`. Publishes:
+`speedo-bench/state/online`, `speedo-bench/cmd/source`,
+`speedo-bench/cmd/power`, `speedo/target`, and four
+`homeassistant/.../config` discovery topics. Subscribes: `speedo/speed`,
+`speedo-bench/cfg/units`.
 
 ## Open items (as of 2026-09-19, next session pick up here)
 
-1. **Reflash the rotation fix.** Build succeeded but the board's USB serial
-   (`/dev/ttyACM0`) dropped off the bus after the first flash and hadn't
-   come back despite several unplug/replug cycles — possibly an Asahi Linux
-   USB hot-plug quirk rather than a firmware issue (the board itself was
-   confirmed running fine, screen lit, UI rendering, when last observed).
-   Get the port back, then, from `firmware/`:
-   `sg dialout -c "pio run --target upload --upload-port /dev/ttyACM0"`.
-2. **Visually confirm landscape orientation is fully correct** (not
-   mirrored or upside-down) after reflashing. If wrong, try flipping
-   `mirror_x`/`mirror_y` in `firmware/main/main.c`'s `lvgl_display_init()` —
-   each is a one-line change + reflash (~10s cycle).
-3. **Confirm BOOT button (GPIO9) actually toggles home/diagnostics screens**
-   on physical hardware — implemented and statically reviewed, not yet
-   pressed for real.
-4. **Confirm the 3-position toggle switch + relay interlock** behave
-   correctly on real GPIO12/13/16/17 wiring (existing code, unmodified by
-   this port, but never exercised on this specific board before).
-5. **Confirm Wi-Fi actually associates and MQTT actually connects** to
-   `192.168.2.9:1883` (hard-coded broker address in `firmware/main/mqtt.c`) —
-   credentials are in place but end-to-end connectivity hasn't been observed
-   in a boot log yet.
+1. **Screen-toggle visual tearing.** BOOT button no longer crashes (see
+   above), but on hardware the transition shows a **diagonal screen-tearing
+   artifact** during the fade, and the Wi-Fi/MQTT status icons take a few
+   seconds to return to green afterward (looks like a brief real
+   reconnect, not just a repaint). Not yet root-caused — likely an LVGL
+   double-buffer/redraw timing issue or something in how `scr_diag.c`
+   initializes/refreshes its icon state on load, but unconfirmed. Not a
+   crash and not blocking; needs a fresh investigation pass.
+2. **Confirm the 3-position toggle switch + relay interlock** behave
+   correctly on real wiring. Inputs were moved to **GPIO18/GPIO19** this
+   session (see above) — **not yet wired into the physical fixture**, so
+   this is still fully untested on hardware. Wire it up and re-verify.
