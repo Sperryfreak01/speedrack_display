@@ -86,54 +86,20 @@ pio run                                                  # build
 sg dialout -c "pio run --target upload --upload-port /dev/ttyACM0"  # flash
 ```
 
-## firmware/ is currently a non-buildable scaffold — real blocker
+## firmware/ is currently a non-buildable scaffold (historical wrong-board plan superseded)
 
-`firmware/main/main.c` assumes a generic BSP abstraction (`bsp/esp-bsp.h` with
-`bsp_display_start()`, `bsp_touch_init(NULL)`, etc.) that **does not exist**
-for this board — `firmware/main/idf_component.yml` says so explicitly. There
-is no such published component in the ESP component registry for the
-Waveshare ESP32-C6-Touch-LCD-1.47.
+`firmware/main/main.c` still assumes a generic BSP abstraction (`bsp/esp-bsp.h`
+with `bsp_display_start()`, `bsp_touch_init(NULL)`, etc.) that doesn't exist —
+leftover from the original wrong-board assumption (Touch-LCD-1.47 vs. the
+actual non-touch LCD-1.47 on hand, see "Hardware on hand" above). The
+previous plan here — vendor Waveshare's `esp_bsp` / `esp_lcd_jd9853` /
+`esp_lcd_touch_axs5106` components from their Touch-LCD demo package and patch
+them for IDF 6.1.0 — targeted that wrong board and is now obsolete. ST7789 is
+a built-in ESP-IDF panel type and this board has no touch controller, so
+**no BSP vendoring is needed at all**.
 
-The real driver source lives in Waveshare's official demo package:
-`https://files.waveshare.com/wiki/ESP32-C6-Touch-LCD-1.47/ESP32-C6-Touch-LCD-1.47-Demo.zip`
-→ `ESP-IDF/03_lvgl_example/components/`: `esp_bsp` (bsp_display/touch/i2c/spi/…),
-`esp_lcd_jd9853` (display panel driver), `esp_lcd_touch_axs5106` (touch driver).
-
-Its API shape is different from what `main.c` assumes — no single
-`bsp_display_start()`; instead:
-
-```c
-i2c_bus_handle = bsp_i2c_init();
-bsp_spi_init();
-bsp_display_init(&io_handle, &panel_handle, max_transfer_sz);
-bsp_touch_init(&touch_handle, i2c_bus_handle, xres, yres, rotation);
-// then manually: lvgl_port_init(), lvgl_port_add_disp(), lvgl_port_add_touch()
-```
-
-**Porting task not yet done**: vendor those three components into
-`firmware/components/`, then rewrite `firmware/main/main.c`'s init sequence to
-match the real driver API before calling our `ui_init()`.
-
-### Compatibility patches needed for Waveshare's vendored code under IDF 6.1.0
-
-Waveshare's demo was written against an older IDF (`idf: ">=5.1"`). Under the
-IDF 6.1.0 that ships with PlatformIO's `framework-espidf` package, three
-things broke and had to be patched (proven in a throwaway smoke-test copy at
-`/tmp/ws_smoketest`, not yet applied to this repo):
-
-1. **`driver` component was split** into per-peripheral components. `esp_bsp`
-   needs `esp_driver_ledc`, `esp_driver_gpio`, `esp_driver_i2c`,
-   `esp_driver_spi` added to its `CMakeLists.txt` `REQUIRES`.
-2. **`esp_lcd_panel_dev_config_t.rgb_endian` was renamed.** New field is
-   `rgb_ele_order` with enum values `LCD_RGB_ELEMENT_ORDER_RGB` /
-   `LCD_RGB_ELEMENT_ORDER_BGR` (was `LCD_RGB_ENDIAN_RGB`/`_BGR`). Fixed in
-   `esp_lcd_jd9853.c` by adding an `#elif ESP_IDF_VERSION >=
-   ESP_IDF_VERSION_VAL(5, 3, 0)` branch (can't `#ifdef` an enum value).
-3. **`lvgl_ui` component (multi-tile demo UI) is dead weight** — not included
-   by `main.c` but ESP-IDF builds every component under `components/` by
-   default. It also needs `driver/temperature_sensor.h` (further driver-split
-   fallout) plus camera/IMU deps we don't want. Just delete it if vendoring
-   Waveshare's example wholesale; we don't need it for our custom `ui/`.
+See "Full port plan (next session: do this)" below for the current,
+confirmed-correct plan, based on the working ST7789 smoke test.
 
 ## Smoke-test #1 results (stock Waveshare Touch-LCD demo — wrong board, historical)
 
