@@ -298,6 +298,16 @@ broker `mqtt://192.168.2.9:1883`, client id `speedo-bench`, LWT
 `homeassistant/.../config` discovery topics. Subscribes: `speedo/speed`,
 `speedo-bench/cfg/units`.
 
+**Known limitation, accepted for now**: MQTT credentials go over plaintext
+(`mqtt://`, port 1883) — a LAN observer could recover them. Not fixed
+because the broker at `192.168.2.9` isn't set up for TLS (no CA cert, no
+`mqtts://` listener); switching the URI alone without that broker-side
+plumbing would just break connectivity. Acceptable tradeoff for this
+LAN-only bench fixture. If the broker ever gains a TLS listener, revisit:
+switch `MQTT_BROKER_URI` to `mqtts://`, provision a CA cert via
+`esp_mqtt_client_config_t.broker.verification`, and consider a
+device-specific least-privilege credential instead of the shared one.
+
 ## Displayed speed temporarily sourced from speedo/target, not speedo/speed (2026-09-19)
 
 Verified the display pipeline is correct by subscribing to the broker
@@ -318,9 +328,31 @@ tracks `speedo/speed`. **TODO: revert `TOPIC_SPEED_DISPLAY` back to
 is fixed — there's a comment marking this at the `#define` site in
 `mqtt.c`.
 
+## CodeRabbit review fixes (2026-09-19): build-verified, not yet reflashed
+
+Addressed three PR #1 review findings in `firmware/main/mqtt.c`:
+- `HA_DEVICE_BLOCK`'s `model` field still said `ESP32-C6-Touch-LCD-1.47`
+  (leftover from the original wrong-board assumption) — corrected to
+  `ESP32-C6-LCD-1.47`.
+- The `speedo/target`/`speedo/speed` handler used `atoi()`, which silently
+  returns 0 on garbage input and has UB on overflow — replaced with
+  `strtol()` + `errno`/`endptr`/range validation, and payloads that fill
+  the receive buffer (truncated) are now rejected instead of silently
+  parsed as whatever fit.
+- Plaintext MQTT credentials (CWE-319) — **deliberately not fixed**, see
+  "Known limitation, accepted for now" above for the reasoning.
+
+`pio run` succeeds. **Not yet reflashed or re-tested on hardware** —
+`/dev/ttyACM0` dropped again before this could be verified (see the BOOT+RST
+recovery procedure earlier in this doc). Next session: get the port back,
+reflash, and re-confirm speed display + HA discovery still work correctly
+after the `strtol` change.
+
 ## Open items (as of 2026-09-19, next session pick up here)
 
-1. **Screen-toggle visual tearing.** BOOT button no longer crashes (see
+1. **Reflash and verify the CodeRabbit fixes above** (model string + strtol
+   validation) — build succeeds but hasn't been tested on hardware yet.
+2. **Screen-toggle visual tearing.** BOOT button no longer crashes (see
    above), but on hardware the transition shows a **diagonal screen-tearing
    artifact** during the fade, and the Wi-Fi/MQTT status icons take a few
    seconds to return to green afterward (looks like a brief real
@@ -328,7 +360,7 @@ is fixed — there's a comment marking this at the `#define` site in
    double-buffer/redraw timing issue or something in how `scr_diag.c`
    initializes/refreshes its icon state on load, but unconfirmed. Not a
    crash and not blocking; needs a fresh investigation pass.
-2. **Confirm the 3-position toggle switch + relay interlock** behave
+3. **Confirm the 3-position toggle switch + relay interlock** behave
    correctly on real wiring. Inputs were moved to **GPIO18/GPIO19** this
    session (see above) — **not yet wired into the physical fixture**, so
    this is still fully untested on hardware. Wire it up and re-verify.

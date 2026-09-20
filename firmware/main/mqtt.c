@@ -10,6 +10,8 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <limits.h>
 
 static const char *TAG = "mqtt";
 
@@ -51,7 +53,7 @@ static const char *HA_DEVICE_BLOCK =
     "\"device\":{"
         "\"identifiers\":[\"speedo_bench\"],"
         "\"name\":\"Speedometer Test Bench\","
-        "\"model\":\"ESP32-C6-Touch-LCD-1.47\","
+        "\"model\":\"ESP32-C6-LCD-1.47\","
         "\"manufacturer\":\"Waveshare / Custom\","
         "\"sw_version\":\"" MQTT_FW_VERSION "\""
     "},"
@@ -174,10 +176,22 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base,
         ESP_LOGD(TAG, "RX %s = %s", topic, payload);
 
         if (strcmp(topic, TOPIC_SPEED_DISPLAY) == 0) {
-            int spd = atoi(payload);
-            if (lvgl_port_lock(0)) {
-                ui_set_speed(spd);
-                lvgl_port_unlock();
+            if (event->data_len >= (int)sizeof(payload)) {
+                ESP_LOGW(TAG, "Speed payload truncated (%d bytes), ignoring", event->data_len);
+            } else {
+                char *endptr = NULL;
+                errno = 0;
+                long spd = strtol(payload, &endptr, 10);
+                bool valid = errno == 0 && endptr != payload && *endptr == '\0'
+                             && spd >= INT_MIN && spd <= INT_MAX;
+                if (valid) {
+                    if (lvgl_port_lock(0)) {
+                        ui_set_speed((int)spd);
+                        lvgl_port_unlock();
+                    }
+                } else {
+                    ESP_LOGW(TAG, "Invalid speed payload: \"%s\"", payload);
+                }
             }
         } else if (strcmp(topic, TOPIC_CFG_UNITS) == 0) {
             units_t u = (strcmp(payload, "kph") == 0) ? UNITS_KPH : UNITS_MPH;
