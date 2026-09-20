@@ -8,18 +8,30 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-/* ── Touch event handlers (§8) ─────────────────────────────────────────── */
+/* ── Screen switching (§8) ─────────────────────────────────────────────────
+ * No touch hardware on this board — ui_toggle_screen() is the single
+ * switching entry point, called from the BOOT-button GPIO handler. The
+ * click handlers below stay wired for free in case touch is ever added. */
+
+void ui_toggle_screen(void)
+{
+    if (lv_screen_active() == scr_home) {
+        lv_screen_load_anim(scr_diag, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
+    } else {
+        lv_screen_load_anim(scr_home, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
+    }
+}
 
 static void on_home_click(lv_event_t *e)
 {
     (void)e;
-    lv_screen_load_anim(scr_diag, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
+    ui_toggle_screen();
 }
 
 static void on_diag_click(lv_event_t *e)
 {
     (void)e;
-    lv_screen_load_anim(scr_home, LV_SCR_LOAD_ANIM_FADE_IN, 200, 0, false);
+    ui_toggle_screen();
 }
 
 /* ── UI initialisation ──────────────────────────────────────────────────── */

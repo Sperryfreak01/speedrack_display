@@ -24,3 +24,10 @@ idf_component_register(
         lvgl
         esp_lcd
 )
+
+# lv_font_conv output (fonts/*.c) guards its LVGL include with
+# LV_LVGL_H_INCLUDE_SIMPLE, picking "lvgl/lvgl.h" otherwise — which doesn't
+# resolve under this component-manager LVGL package layout (root is
+# lvgl__lvgl/, not lvgl/). Match the flag every other lv_font_conv/LVGL
+# consumer here expects.
+target_compile_definitions(${COMPONENT_LIB} PUBLIC LV_LVGL_H_INCLUDE_SIMPLE)

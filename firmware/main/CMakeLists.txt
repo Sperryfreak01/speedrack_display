@@ -14,6 +14,10 @@ idf_component_register(
         esp_netif
         mqtt
         driver
+        esp_lcd
+        esp_driver_gpio
+        esp_driver_spi
+        esp_driver_ledc
         esp_lvgl_port
         nvs_flash
         esp_timer

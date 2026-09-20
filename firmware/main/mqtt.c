@@ -1,5 +1,6 @@
 #include "mqtt.h"
 #include "ui.h"
+#include "credentials.h"
 
 #include "mqtt_client.h"
 #include "esp_log.h"
@@ -9,6 +10,8 @@
 
 #include <string.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <limits.h>
 
 static const char *TAG = "mqtt";
 
@@ -27,6 +30,13 @@ static const char *TAG = "mqtt";
 #define TOPIC_STATE_SPEED   "speedo/speed"    /* existing controller output */
 #define TOPIC_CFG_UNITS     "speedo-bench/cfg/units"
 
+/* TODO: upstream controller firmware is publishing incorrect values on
+ * speedo/speed (confirmed 2026-09-19 by comparing broker traffic against
+ * the display — see CLAUDE.md). Displaying the commanded value from
+ * speedo/target instead as a stopgap. Revert TOPIC_SPEED_DISPLAY back to
+ * TOPIC_STATE_SPEED once the upstream speed calculation is fixed. */
+#define TOPIC_SPEED_DISPLAY TOPIC_SPEED_ZERO
+
 /* HA auto-discovery */
 #define TOPIC_HA_SPEED_CFG      "homeassistant/sensor/speedo_bench_speed/config"
 #define TOPIC_HA_SOURCE_CFG     "homeassistant/sensor/speedo_bench_source/config"
@@ -43,7 +53,7 @@ static const char *HA_DEVICE_BLOCK =
     "\"device\":{"
         "\"identifiers\":[\"speedo_bench\"],"
         "\"name\":\"Speedometer Test Bench\","
-        "\"model\":\"ESP32-C6-Touch-LCD-1.47\","
+        "\"model\":\"ESP32-C6-LCD-1.47\","
         "\"manufacturer\":\"Waveshare / Custom\","
         "\"sw_version\":\"" MQTT_FW_VERSION "\""
     "},"
@@ -131,7 +141,7 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base,
         publish_discovery();
 
         /* 3. Subscribe to state topics */
-        esp_mqtt_client_subscribe(s_client, TOPIC_STATE_SPEED, 1);
+        esp_mqtt_client_subscribe(s_client, TOPIC_SPEED_DISPLAY, 1);
         esp_mqtt_client_subscribe(s_client, TOPIC_CFG_UNITS, 1);
 
         /* 4. Update UI and diagnostics */
@@ -165,11 +175,23 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base,
 
         ESP_LOGD(TAG, "RX %s = %s", topic, payload);
 
-        if (strcmp(topic, TOPIC_STATE_SPEED) == 0) {
-            int spd = atoi(payload);
-            if (lvgl_port_lock(0)) {
-                ui_set_speed(spd);
-                lvgl_port_unlock();
+        if (strcmp(topic, TOPIC_SPEED_DISPLAY) == 0) {
+            if (event->data_len >= (int)sizeof(payload)) {
+                ESP_LOGW(TAG, "Speed payload truncated (%d bytes), ignoring", event->data_len);
+            } else {
+                char *endptr = NULL;
+                errno = 0;
+                long spd = strtol(payload, &endptr, 10);
+                bool valid = errno == 0 && endptr != payload && *endptr == '\0'
+                             && spd >= INT_MIN && spd <= INT_MAX;
+                if (valid) {
+                    if (lvgl_port_lock(0)) {
+                        ui_set_speed((int)spd);
+                        lvgl_port_unlock();
+                    }
+                } else {
+                    ESP_LOGW(TAG, "Invalid speed payload: \"%s\"", payload);
+                }
             }
         } else if (strcmp(topic, TOPIC_CFG_UNITS) == 0) {
             units_t u = (strcmp(payload, "kph") == 0) ? UNITS_KPH : UNITS_MPH;
@@ -195,8 +217,10 @@ static void mqtt_event_handler(void *arg, esp_event_base_t base,
 void mqtt_start(void)
 {
     esp_mqtt_client_config_t cfg = {
-        .broker.address.uri    = MQTT_BROKER_URI,
-        .credentials.client_id = MQTT_CLIENT_ID,
+        .broker.address.uri                  = MQTT_BROKER_URI,
+        .credentials.client_id               = MQTT_CLIENT_ID,
+        .credentials.username                = MQTT_USERNAME,
+        .credentials.authentication.password = MQTT_PASSWORD,
         .session.last_will = {
             .topic   = TOPIC_ONLINE,
             .msg     = "offline",
