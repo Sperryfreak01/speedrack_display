@@ -307,6 +307,7 @@ LAN-only bench fixture. If the broker ever gains a TLS listener, revisit:
 switch `MQTT_BROKER_URI` to `mqtts://`, provision a CA cert via
 `esp_mqtt_client_config_t.broker.verification`, and consider a
 device-specific least-privilege credential instead of the shared one.
+Tracked in [issue #2](https://github.com/Sperryfreak01/speedrack_display/issues/2).
 
 ## Displayed speed temporarily sourced from speedo/target, not speedo/speed (2026-09-19)
 
